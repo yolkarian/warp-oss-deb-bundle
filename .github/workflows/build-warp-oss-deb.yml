@@ -1,0 +1,78 @@
+name: Build Warp OSS Debian package
+
+run-name: Build Warp OSS deb from ${{ inputs.warp_repository }}@${{ inputs.warp_ref }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      warp_repository:
+        description: GitHub repository containing the Warp source tree.
+        required: true
+        default: warpdotdev/warp
+      warp_ref:
+        description: Branch, tag, or commit SHA to build.
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warp-oss-deb-${{ github.ref }}-${{ inputs.warp_repository }}-${{ inputs.warp_ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-deb:
+    name: Build .deb
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      WARP_SOURCE_DIR: ${{ github.workspace }}/warp
+      SETTINGS_SCHEMA_CACHE: ${{ github.workspace }}/.settings_schema_cache.json
+    steps:
+      - name: Checkout packaging repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout Warp source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.warp_repository }}
+          ref: ${{ inputs.warp_ref }}
+          path: warp
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare Warp build environment
+        uses: ./warp/.github/actions/prepare_environment
+        with:
+          target_os: linux
+          is_self_hosted: false
+          install_release_deps: true
+
+      - name: Install Debian packaging tools
+        run: sudo apt-get install -y fakeroot dpkg-dev desktop-file-utils file
+
+      - name: Validate OSS desktop entry
+        working-directory: warp
+        run: desktop-file-validate app/channels/oss/dev.warp.WarpOss.desktop
+
+      - name: Build OSS Debian package
+        id: build
+        run: bash scripts/build-warp-oss-deb.sh
+
+      - name: Verify Debian package metadata
+        env:
+          DEB_PATH: ${{ steps.build.outputs.deb_path }}
+        run: |
+          test "$(dpkg-deb --field "$DEB_PATH" Package)" = "warp-terminal-oss"
+          test "$(dpkg-deb --field "$DEB_PATH" Architecture)" = "amd64"
+          dpkg-deb --info "$DEB_PATH"
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ steps.build.outputs.deb_name }}
+          path: ${{ steps.build.outputs.deb_path }}
+          if-no-files-found: error
+          retention-days: 14

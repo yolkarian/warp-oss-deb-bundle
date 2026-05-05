@@ -1,0 +1,11 @@
+# Local Warp checkout used by the GitHub workflow and ad hoc runs.
+/warp/
+
+# Rust and packaging build output.
+/target/
+*.deb
+
+# Editor and OS noise.
+.DS_Store
+.vscode/
+.idea/
