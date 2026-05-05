@@ -15,7 +15,7 @@ on:
         default: main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: warp-oss-deb-${{ github.ref }}-${{ inputs.warp_repository }}-${{ inputs.warp_ref }}
@@ -69,10 +69,14 @@ jobs:
           test "$(dpkg-deb --field "$DEB_PATH" Architecture)" = "amd64"
           dpkg-deb --info "$DEB_PATH"
 
-      - name: Upload Debian package
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - name: Publish Debian package to GitHub Release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
-          name: ${{ steps.build.outputs.deb_name }}
-          path: ${{ steps.build.outputs.deb_path }}
-          if-no-files-found: error
-          retention-days: 14
+          tag_name: ${{ steps.build.outputs.release_tag }}
+          name: Warp OSS Debian package ${{ steps.build.outputs.release_tag }}
+          body: |
+            Warp OSS Debian package built from `${{ inputs.warp_repository }}@${{ inputs.warp_ref }}`.
+          files: ${{ steps.build.outputs.deb_path }}
+          fail_on_unmatched_files: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
