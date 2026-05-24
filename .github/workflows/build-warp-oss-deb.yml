@@ -30,6 +30,7 @@ jobs:
       CARGO_TERM_COLOR: always
       WARP_SOURCE_DIR: ${{ github.workspace }}/warp
       SETTINGS_SCHEMA_CACHE: ${{ github.workspace }}/.settings_schema_cache.json
+      WARP_REF: ${{ inputs.warp_ref }}
     steps:
       - name: Checkout packaging repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

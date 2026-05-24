@@ -24,10 +24,32 @@ cargo_target_dir="$(cd -- "$cargo_target_input" && pwd)"
 export CARGO_TARGET_DIR="$cargo_target_dir"
 export SETTINGS_SCHEMA_CACHE="${SETTINGS_SCHEMA_CACHE:-$cargo_target_dir/.settings_schema_cache.json}"
 
-if [[ -z "${GIT_RELEASE_TAG:-}" ]]; then
-  exact_tag="$(git -C "$warp_source_dir" describe --tags --exact-match 2>/dev/null || true)"
-  if [[ "$exact_tag" =~ ^v[0-9]+(\.[0-9]+)*\.oss_[0-9]+$ ]]; then
-    GIT_RELEASE_TAG="$exact_tag"
+to_oss_release_tag() {
+  local tag="${1#refs/tags/}"
+
+  if [[ "$tag" =~ ^(v[0-9]+(\.[0-9]+)*)\.(dev|preview|stable|oss)_([0-9]+)$ ]]; then
+    printf '%s.oss_%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[4]}"
+    return 0
+  fi
+
+  return 1
+}
+
+if [[ -n "${GIT_RELEASE_TAG:-}" ]]; then
+  provided_release_tag="$GIT_RELEASE_TAG"
+  if ! GIT_RELEASE_TAG="$(to_oss_release_tag "$provided_release_tag")"; then
+    fail "GIT_RELEASE_TAG must be a Warp release tag like v0.YYYY.MM.DD.HH.MM.stable_00 or v0.YYYY.MM.DD.HH.MM.oss_00; got '$provided_release_tag'"
+  fi
+else
+  requested_release_tag=""
+  if [[ -n "${WARP_REF:-}" ]]; then
+    requested_release_tag="$WARP_REF"
+  else
+    requested_release_tag="$(git -C "$warp_source_dir" describe --tags --exact-match 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$requested_release_tag" ]] && GIT_RELEASE_TAG="$(to_oss_release_tag "$requested_release_tag")"; then
+    :
   else
     version_timestamp="$(date -u +%Y.%m.%d.%H.%M)"
     version_suffix="00"
@@ -38,7 +60,7 @@ if [[ -z "${GIT_RELEASE_TAG:-}" ]]; then
   fi
 fi
 
-[[ "$GIT_RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+)*\.oss_[0-9]+$ ]] || fail "GIT_RELEASE_TAG must look like v0.YYYY.MM.DD.HH.MM.oss_00; got '$GIT_RELEASE_TAG'"
+[[ "$GIT_RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+)*\.oss_[0-9]+$ ]] || fail "resolved GIT_RELEASE_TAG must look like v0.YYYY.MM.DD.HH.MM.oss_00; got '$GIT_RELEASE_TAG'"
 export GIT_RELEASE_TAG
 
 printf 'Using Warp source: %s\n' "$warp_source_dir"
