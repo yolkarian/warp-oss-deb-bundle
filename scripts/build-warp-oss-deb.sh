@@ -35,6 +35,84 @@ to_oss_release_tag() {
   return 1
 }
 
+# Warp's upstream Debian bundler appends apt repository setup for every channel.
+# This repository publishes OSS builds as standalone .deb files, so remove that
+# setup from the generated maintainer scripts before publishing the package.
+strip_apt_repository_setup_from_deb() (
+  set -Eeuo pipefail
+
+  local deb_path="$1"
+  local work_dir extract_dir rebuilt_deb
+
+  work_dir="$(mktemp -d)"
+  trap 'rm -rf -- "$work_dir"' EXIT
+
+  extract_dir="$work_dir/package"
+  rebuilt_deb="$work_dir/$(basename -- "$deb_path")"
+
+  dpkg-deb -R "$deb_path" "$extract_dir"
+
+  python3 - "$extract_dir/DEBIAN/postinst" "$extract_dir/DEBIAN/postrm" <<'PY'
+from pathlib import Path
+import sys
+
+postinst = Path(sys.argv[1])
+postrm = Path(sys.argv[2])
+
+
+def strip_from_marker(path: Path, marker: str) -> None:
+    text = path.read_text()
+    marker_index = text.find(marker)
+    if marker_index >= 0:
+        path.write_text(text[:marker_index].rstrip() + "\n")
+
+
+def append_if_missing(path: Path, marker: str, block: str) -> None:
+    text = path.read_text()
+    if marker not in text:
+        path.write_text(text.rstrip() + "\n\n" + block.strip() + "\n")
+
+
+strip_from_marker(postinst, "# Determine the path to the apt-config command.\nAPT_CONFIG=")
+append_if_missing(
+    postinst,
+    "Remove stale apt repository files created by older OSS Debian packages",
+    r'''
+# Remove stale apt repository files created by older OSS Debian packages. The
+# OSS channel is distributed as standalone .deb artifacts, not as an apt repo.
+APT_CONFIG="$(command -v apt-config 2> /dev/null || true)"
+if [ -n "$APT_CONFIG" ]; then
+  eval $("$APT_CONFIG" shell APT_SOURCE_LIST_DIR 'Dir::Etc::sourceparts/d')
+  if [ -n "${APT_SOURCE_LIST_DIR:-}" ]; then
+    rm -f "${APT_SOURCE_LIST_DIR}warpdotdev-oss.list"
+    rm -f "${APT_SOURCE_LIST_DIR}warpdotdev-oss.sources"
+  fi
+
+  eval $("$APT_CONFIG" shell APT_TRUSTED_KEYRING_DIR 'Dir::Etc::trustedparts/d')
+  if [ -n "${APT_TRUSTED_KEYRING_DIR:-}" ]; then
+    rm -f "${APT_TRUSTED_KEYRING_DIR}warpdotdev-oss.gpg"
+  fi
+fi
+''',
+)
+
+bad_needles = (
+    "https://releases.warp.dev/linux/deb",
+    'cat > "$APT_SOURCE_LIST"',
+    "SIGNING_KEY_PATH",
+    "SIGNINGKEY",
+)
+for script in (postinst, postrm):
+    text = script.read_text()
+    for needle in bad_needles:
+        if needle in text:
+            raise SystemExit(f"{script}: repository setup still contains {needle!r}")
+PY
+
+  fakeroot dpkg-deb -b "$extract_dir" "$rebuilt_deb" >/dev/null
+  mv -f -- "$rebuilt_deb" "$deb_path"
+)
+
 if [[ -n "${GIT_RELEASE_TAG:-}" ]]; then
   provided_release_tag="$GIT_RELEASE_TAG"
   if ! GIT_RELEASE_TAG="$(to_oss_release_tag "$provided_release_tag")"; then
@@ -91,6 +169,9 @@ architecture="$(dpkg-deb --field "$deb_path" Architecture)"
 
 [[ "$package_name" == "warp-terminal-oss" ]] || fail "unexpected package name '$package_name' in $deb_path"
 [[ "$architecture" == "amd64" || "$architecture" == "arm64" ]] || fail "unexpected package architecture '$architecture' in $deb_path"
+
+strip_apt_repository_setup_from_deb "$deb_path"
+printf 'Removed apt repository setup from Debian maintainer scripts.\n'
 
 printf 'Built Debian package: %s\n' "$deb_path"
 dpkg-deb --info "$deb_path"

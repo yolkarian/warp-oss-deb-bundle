@@ -70,6 +70,15 @@ jobs:
           test "$(dpkg-deb --field "$DEB_PATH" Architecture)" = "amd64"
           dpkg-deb --info "$DEB_PATH"
 
+          control_dir="$(mktemp -d)"
+          trap 'rm -rf "$control_dir"' EXIT
+          dpkg-deb -e "$DEB_PATH" "$control_dir"
+          if grep -R -E 'https://releases\.warp\.dev/linux/deb|cat > "\$APT_SOURCE_LIST"|SIGNING_KEY_PATH|SIGNINGKEY' \
+              "$control_dir/postinst" "$control_dir/postrm"; then
+            echo "::error::Debian maintainer scripts must not add a Warp apt repository"
+            exit 1
+          fi
+
       - name: Publish Debian package to GitHub Release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
